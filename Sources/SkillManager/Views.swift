@@ -575,60 +575,87 @@ struct SkillMapView: View {
     @Environment(SkillStore.self) private var store
     let skills: [Skill]
     let onSelect: (Skill) -> Void
-    @State private var platformFilter: String? = nil
-    @State private var collapsed: Set<String> = []   // 被折叠的分类 id;空 = 全展开
+    @State private var selectedTab = 0
+    @State private var collapsed: Set<String> = []
 
     private var filtered: [Skill] {
-        guard let pf = platformFilter else { return skills }
-        return skills.filter { $0.platform == pf }
+        switch selectedTab {
+        case 0: return skills
+        case 1: return skills.filter { $0.platform == "Claude Code" }
+        case 2: return skills.filter { $0.platform == "Codex" }
+        default: return skills
+        }
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                filterBar
-                    .padding()
+        VStack(spacing: 0) {
+            tabBar
 
-                ForEach(categorize(filtered)) { group in
-                    Section {
-                        if !collapsed.contains(group.id) {
-                            ForEach(group.skills) { skill in
-                                SkillMapRow(skill: skill, onSelect: onSelect)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                    ForEach(categorize(filtered)) { group in
+                        Section {
+                            if !collapsed.contains(group.id) {
+                                ForEach(group.skills) { skill in
+                                    SkillMapRow(skill: skill, onSelect: onSelect)
+                                }
+                                .padding(.horizontal)
                             }
-                            .padding(.horizontal)
+                        } header: {
+                            sectionHeader(group)
                         }
-                    } header: {
-                        sectionHeader(group)
+                    }
+
+                    if filtered.isEmpty {
+                        ContentUnavailableView("没有匹配的技能", systemImage: "magnifyingglass")
+                            .padding(.top, 40)
                     }
                 }
-
-                if filtered.isEmpty {
-                    ContentUnavailableView("没有匹配的技能", systemImage: "magnifyingglass")
-                        .padding(.top, 40)
-                }
+                .padding(.top)
             }
         }
     }
 
-    private var filterBar: some View {
+    private var tabBar: some View {
         HStack(spacing: 8) {
-            filterPill("已安装", count: skills.count, active: platformFilter == nil) {
-                platformFilter = nil
-            }
-            filterPill("Claude", count: skills.filter { $0.platform == "Claude Code" }.count,
-                       color: .orange, active: platformFilter == "Claude Code") {
-                platformFilter = platformFilter == "Claude Code" ? nil : "Claude Code"
-            }
-            filterPill("Codex", count: skills.filter { $0.platform == "Codex" }.count,
-                       color: .blue, active: platformFilter == "Codex") {
-                platformFilter = platformFilter == "Codex" ? nil : "Codex"
-            }
+            tabButton("已安装", count: skills.count, tag: 0)
+            tabButton("Claude", count: skills.filter { $0.platform == "Claude Code" }.count,
+                     color: .orange, tag: 1)
+            tabButton("Codex", count: skills.filter { $0.platform == "Codex" }.count,
+                     color: .blue, tag: 2)
             Spacer()
-            Button("检查更新", systemImage: "arrow.clockwise") { Task { await store.scan() } }
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .buttonStyle(.plain)
+            Button("检查更新", systemImage: "arrow.clockwise") {
+                Task { await store.scan() }
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .buttonStyle(.plain)
         }
+        .padding()
+        .background(.bar)
+    }
+
+    private func tabButton(_ label: String, count: Int, color: Color = .accentColor, tag: Int) -> some View {
+        Button {
+            selectedTab = tag
+        } label: {
+            HStack(spacing: 5) {
+                Text(label)
+                    .font(.callout)
+                    .fontWeight(selectedTab == tag ? .semibold : .regular)
+                Text("\(count)")
+                    .font(.caption.monospaced())
+                    .bold()
+                    .foregroundStyle(selectedTab == tag ? color : .secondary)
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 5)
+            .background(
+                selectedTab == tag ? AnyShapeStyle(color.opacity(0.15)) : AnyShapeStyle(.quaternary),
+                in: .capsule
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private func sectionHeader(_ group: CatGroup) -> some View {
@@ -660,20 +687,6 @@ struct SkillMapView: View {
         .buttonStyle(.plain)
     }
 
-    private func filterPill(_ label: String, count: Int, color: Color = .accentColor, active: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 5) {
-                Text(label).font(.callout).fontWeight(active ? .semibold : .regular)
-                Text("\(count)")
-                    .font(.caption.monospaced()).bold()
-                    .foregroundStyle(active ? color : .secondary)
-            }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 5)
-            .background(active ? AnyShapeStyle(color.opacity(0.15)) : AnyShapeStyle(.quaternary), in: .capsule)
-        }
-        .buttonStyle(.plain)
-    }
 }
 
 // MARK: - Skill Map Row (own hover state, per views.md guidance)

@@ -86,27 +86,27 @@ struct ContentView: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .automatic) { Spacer() }
         ToolbarItem(placement: .automatic) {
-            Button {
-                isDark.toggle()
-            } label: {
-                Image(systemName: isDark ? "sun.max" : "moon.fill")
-            }
-            .buttonStyle(.plain)
-            .help(isDark ? "切换到浅色外观" : "切换到深色外观")
-        }
-        ToolbarItem(placement: .automatic) {
-            Button(translator.enabled ? "EN" : "中") {
-                translator.enabled.toggle()
-            }
-            .buttonStyle(.plain)
-            .help(translator.enabled ? "显示英文原文" : "显示中文翻译")
-        }
-        ToolbarItem(placement: .automatic) {
-            HStack(spacing: 5) {
+            HStack(spacing: 14) {
+                Button {
+                    isDark.toggle()
+                } label: {
+                    Image(systemName: isDark ? "sun.max" : "moon.fill")
+                        .font(.system(size: 16, weight: .regular))
+                }
+                .buttonStyle(.plain)
+                .help(isDark ? "切换到浅色外观" : "切换到深色外观")
+
+                Button(translator.enabled ? "EN" : "中") {
+                    translator.enabled.toggle()
+                }
+                .font(.system(size: 14, weight: .medium))
+                .buttonStyle(.plain)
+                .help(translator.enabled ? "显示英文原文" : "显示中文翻译")
+
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                    .font(.callout)
-                TextField("搜索技能…", text: $search)
+                    .font(.system(size: 14, weight: .regular))
+                TextField("", text: $search,
+                    prompt: Text("搜索技能…").foregroundStyle(.secondary))
                     .textFieldStyle(.plain)
                     .frame(width: 160)
                 if !search.isEmpty {
@@ -117,8 +117,13 @@ struct ContentView: View {
                         .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(
+                isDark ? Color(white: 0.2) : .white,
+                in: .capsule
+            )
+            .shadow(color: .black.opacity(isDark ? 0.3 : 0.08), radius: 10, y: 3)
         }
     }
 
