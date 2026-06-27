@@ -1,0 +1,12 @@
+# Swift / SwiftPM build
+.build/
+.swiftpm/
+
+# macOS & 构建产物(.app/.dmg 走 GitHub Releases,不进仓库)
+.DS_Store
+SkillManager.app/
+*.dmg
+
+# 本地工具元数据(非项目内容)
+.claude/
+.remember/
