@@ -27,12 +27,12 @@ struct ResizeHandle: View {
             .overlay(Rectangle().fill(Color(nsColor: .separatorColor)).frame(width: 1))
             .contentShape(.rect)
             .onHover { $0 ? NSCursor.resizeLeftRight.set() : NSCursor.arrow.set() }
-            .gesture(
+            .highPriorityGesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { v in
-                        let b = base ?? width                     // 手势开始锁基准
                         if base == nil { base = width }
-                        width = min(max(b + v.translation.width, range.lowerBound), range.upperBound)
+                        let newWidth = min(max((base ?? width) + v.translation.width, range.lowerBound), range.upperBound)
+                        width = newWidth
                     }
                     .onEnded { _ in base = nil }
             )
@@ -360,9 +360,10 @@ struct SkillDetailView: View {
                 }
                 .padding(.vertical, 6)
             }
-            .frame(width: treeWidth)                          // 默认窄
+            .frame(width: treeWidth)
 
-            ResizeHandle(width: $treeWidth, range: 160...420)   // 只拖这根线
+            ResizeHandle(width: $treeWidth, range: 160...420)
+                .transaction { t in t.animation = nil }
 
             if let file = previewFile {
                 VStack(alignment: .leading, spacing: 0) {
@@ -577,6 +578,8 @@ struct SkillMapView: View {
     let onSelect: (Skill) -> Void
     @State private var selectedTab = 0
     @State private var collapsed: Set<String> = []
+    @State private var cachedCounts: (all: Int, claude: Int, codex: Int) = (0, 0, 0)
+    @State private var categorizedGroups: [CatGroup] = []
 
     private var filtered: [Skill] {
         switch selectedTab {
@@ -593,7 +596,7 @@ struct SkillMapView: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                    ForEach(categorize(filtered)) { group in
+                    ForEach(categorizedGroups) { group in
                         Section {
                             if !collapsed.contains(group.id) {
                                 ForEach(group.skills) { skill in
@@ -614,15 +617,35 @@ struct SkillMapView: View {
                 .padding(.top)
             }
         }
+        .task(id: skills.count) {
+            updateCounts()
+        }
+        .onChange(of: selectedTab) { _, _ in
+            updateCategories()
+        }
+        .onAppear {
+            updateCounts()
+            updateCategories()
+        }
+    }
+
+    private func updateCounts() {
+        cachedCounts = (
+            all: skills.count,
+            claude: skills.filter { $0.platform == "Claude Code" }.count,
+            codex: skills.filter { $0.platform == "Codex" }.count
+        )
+    }
+
+    private func updateCategories() {
+        categorizedGroups = categorize(filtered)
     }
 
     private var tabBar: some View {
         HStack(spacing: 8) {
-            tabButton("已安装", count: skills.count, tag: 0)
-            tabButton("Claude", count: skills.filter { $0.platform == "Claude Code" }.count,
-                     color: .orange, tag: 1)
-            tabButton("Codex", count: skills.filter { $0.platform == "Codex" }.count,
-                     color: .blue, tag: 2)
+            tabButton("已安装", count: cachedCounts.all, tag: 0)
+            tabButton("Claude", count: cachedCounts.claude, color: .orange, tag: 1)
+            tabButton("Codex", count: cachedCounts.codex, color: .blue, tag: 2)
             Spacer()
             Button("检查更新", systemImage: "arrow.clockwise") {
                 Task { await store.scan() }

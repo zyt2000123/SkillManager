@@ -31,6 +31,7 @@ struct ContentView: View {
     @State private var selection: SidebarSelection? = .skillMap
     @State private var selectedSkillId: String?
     @State private var search = ""
+    @State private var debouncedSearch = ""
     @State private var listWidth: CGFloat = 280   // 技能列表默认宽度(可拖)
     @AppStorage("isDarkMode") private var isDark = true
     @State private var translator = Translator()
@@ -51,7 +52,7 @@ struct ContentView: View {
     }
 
     private var searchedSkills: [Skill] {
-        store.filtered(by: .skillMap, search: search, zh: translator.zh)
+        store.filtered(by: .skillMap, search: debouncedSearch, zh: translator.zh)
     }
 
     @ViewBuilder
@@ -64,14 +65,15 @@ struct ContentView: View {
         } else {
             HStack(spacing: 0) {
                 SkillListView(
-                    skills: store.filtered(by: selection ?? .skillMap, search: search, zh: translator.zh),
+                    skills: store.filtered(by: selection ?? .skillMap, search: debouncedSearch, zh: translator.zh),
                     selectedId: $selectedSkillId
                 )
-                .frame(width: listWidth)                            // 默认窄
-                ResizeHandle(width: $listWidth, range: 220...600)   // 只拖这根线
+                .frame(width: listWidth)
+                ResizeHandle(width: $listWidth, range: 220...600)
+                    .transaction { t in t.animation = nil }
                 if let skill = selectedSkill {
                     SkillDetailView(skill: skill)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)   // 右侧最大
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ContentUnavailableView("选择一个技能",
                         systemImage: "square.grid.2x2",
@@ -140,6 +142,14 @@ struct ContentView: View {
         .onChange(of: selection) { _, newSel in
             if !skillBelongs(selectedSkillId, to: newSel) {
                 selectedSkillId = nil
+            }
+        }
+        .onChange(of: search) { _, newValue in
+            Task {
+                try? await Task.sleep(for: .milliseconds(300))
+                if search == newValue {
+                    debouncedSearch = newValue
+                }
             }
         }
         .task {
