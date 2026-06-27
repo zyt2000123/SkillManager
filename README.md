@@ -61,4 +61,4 @@ SVG 预览经 `<img>` + data URI + CSP 渲染，强制禁用脚本——即使�
 
 ## 📄 许可证
 
-[MIT](LICENSE) © 2026 yutaizhao-max
+[MIT](LICENSE) © 2026 zyt2000123
