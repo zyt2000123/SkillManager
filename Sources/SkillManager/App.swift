@@ -91,12 +91,14 @@ struct ContentView: View {
             } label: {
                 Image(systemName: isDark ? "sun.max" : "moon.fill")
             }
+            .buttonStyle(.plain)
             .help(isDark ? "切换到浅色外观" : "切换到深色外观")
         }
         ToolbarItem(placement: .automatic) {
             Button(translator.enabled ? "EN" : "中") {
                 translator.enabled.toggle()
             }
+            .buttonStyle(.plain)
             .help(translator.enabled ? "显示英文原文" : "显示中文翻译")
         }
         ToolbarItem(placement: .automatic) {
@@ -117,7 +119,6 @@ struct ContentView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
-            .background(.quaternary, in: .capsule)
         }
     }
 
