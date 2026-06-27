@@ -2,11 +2,11 @@
 .build/
 .swiftpm/
 
-# macOS & 构建产物(.app/.dmg 走 GitHub Releases,不进仓库)
+# macOS and build artifacts (.app/.dmg files are distributed through GitHub Releases)
 .DS_Store
 SkillManager.app/
 *.dmg
 
-# 本地工具元数据(非项目内容)
+# Local tool metadata (not part of the project)
 .claude/
 .remember/

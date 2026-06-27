@@ -4,9 +4,9 @@ import WebKit
 import MarkdownUI
 import Highlightr
 
-// MARK: - 文件预览:Markdown / 图片 / SVG / 代码高亮
+// MARK: - File preview: Markdown, images, SVG, and syntax-highlighted code
 
-/// 文件扩展名 → highlight.js 语言标识;nil = 交给 Highlightr 自动检测。
+/// Maps file extensions to highlight.js language identifiers; nil lets Highlightr auto-detect.
 func hljsLanguage(for ext: String) -> String? {
     switch ext {
     case "js", "mjs", "cjs", "jsx": return "javascript"
@@ -32,8 +32,8 @@ func hljsLanguage(for ext: String) -> String? {
 
 private func highlightrTheme(dark: Bool) -> String { dark ? "atom-one-dark" : "atom-one-light" }
 
-// ponytail: Highlightr 构造昂贵(起 JSContext + 加载 highlight.js + 主题 CSS,几十 ms)。
-// 渲染全程主线程,按主题复用单例,省掉每个代码块/每次切文件的重建。非主线程访问不安全,本 app 不会。
+// Highlightr initialization is expensive because it starts a JSContext and loads highlight.js and theme CSS.
+// Rendering stays on the main thread, so reuse one instance per theme instead of rebuilding it for every block.
 enum Highlighters {
     nonisolated(unsafe) private static var pool: [String: Highlightr] = [:]
     static func themed(_ theme: String) -> Highlightr? {
@@ -45,7 +45,7 @@ enum Highlighters {
     }
 }
 
-/// 把 Highlightr 接成 MarkdownUI 的代码块高亮器 → md 里的 ``` 代码块也上色。
+/// Connects Highlightr to MarkdownUI so fenced code blocks receive syntax highlighting.
 struct HljsCodeHighlighter: CodeSyntaxHighlighter {
     let dark: Bool
     func highlightCode(_ code: String, language: String?) -> Text {
@@ -55,7 +55,7 @@ struct HljsCodeHighlighter: CodeSyntaxHighlighter {
     }
 }
 
-/// 只读、可选中、自带滚动的代码视图,Highlightr 上色 + 主题底色。
+/// A read-only, selectable, scrollable code view with syntax highlighting and a themed background.
 struct CodeTextView: NSViewRepresentable {
     let code: String
     let language: String?
@@ -67,14 +67,14 @@ struct CodeTextView: NSViewRepresentable {
         scroll.hasHorizontalScroller = true
         scroll.autohidesScrollers = true
         scroll.drawsBackground = false
-        scroll.allowsMagnification = true     // 双指捏合缩放
+        scroll.allowsMagnification = true     // Support pinch-to-zoom.
         scroll.minMagnification = 0.5
         scroll.maxMagnification = 5.0
         if let tv = scroll.documentView as? NSTextView {
             tv.isEditable = false
             tv.isSelectable = true
             tv.textContainerInset = NSSize(width: 14, height: 14)
-            tv.isHorizontallyResizable = true                 // 长行横向滚动,不强制换行
+            tv.isHorizontallyResizable = true                 // Scroll long lines horizontally instead of wrapping.
             tv.textContainer?.widthTracksTextView = false
             tv.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
                                                      height: CGFloat.greatestFiniteMagnitude)
@@ -84,7 +84,7 @@ struct CodeTextView: NSViewRepresentable {
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         guard let tv = scroll.documentView as? NSTextView else { return }
-        let hl = Highlighters.themed(highlightrTheme(dark: dark))   // ponytail: 复用池中实例,不再每次新建
+        let hl = Highlighters.themed(highlightrTheme(dark: dark))   // Reuse the pooled instance.
         let attr = hl?.highlight(code, as: language)
             ?? NSAttributedString(string: code,
                                   attributes: [.font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)])
@@ -93,10 +93,10 @@ struct CodeTextView: NSViewRepresentable {
     }
 }
 
-// ponytail: SVG 是矢量 web 格式,NSImage 渲染不可靠;用 WKWebView 渲染。
-// 安全:skill 多为第三方安装,SVG 可内嵌 <script>/onload。绝不把 svg 内联进可执行 HTML,而是
-// base64 塞进 <img>(img 加载的 SVG 浏览器强制禁脚本/禁外部资源) + CSP + baseURL=nil 切断 file:// 本地读。
-// 仍居中等比缩放,白底确保任意配色图标可见。
+// SVG is a vector web format that NSImage does not render reliably, so use WKWebView.
+// Security: skills often come from third parties, and SVG can embed scripts or onload handlers. Never inline
+// the SVG into executable HTML. Load its base64 data through <img>, apply a strict CSP, and use a nil base URL
+// to prevent file:// access. Keep the image centered and scaled on white so any icon palette remains visible.
 struct WebFilePreview: NSViewRepresentable {
     let url: URL
     func makeNSView(context: Context) -> WKWebView { WKWebView() }
@@ -114,14 +114,14 @@ struct WebFilePreview: NSViewRepresentable {
     }
 }
 
-/// 按扩展名分流:.md → Markdown;位图 → NSImage;svg → WebView;其余 → 代码高亮。
+/// Routes by extension: Markdown, bitmap images, SVG through WebView, and syntax-highlighted code otherwise.
 struct FilePreview: View {
     let directory: String
     let file: String
     let content: String
     @Environment(\.colorScheme) private var scheme
 
-    // 位图:NSImage 可靠加载;svg 是矢量,单独走 WebView。
+    // NSImage reliably loads bitmap formats; SVG uses the dedicated WebView path.
     private static let bitmapExts: Set<String> = ["png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "heic", "webp", "ico"]
 
     var body: some View {
@@ -139,7 +139,7 @@ struct FilePreview: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding()
             } else {
-                ContentUnavailableView("无法加载图片", systemImage: "photo")
+                ContentUnavailableView("Unable to Load Image", systemImage: "photo")
             }
         } else {
             CodeTextView(code: content, language: hljsLanguage(for: ext), dark: scheme == .dark)
@@ -150,7 +150,7 @@ struct FilePreview: View {
         ScrollView {
             Markdown(frontmatterAsYAML(content))
                 .markdownCodeSyntaxHighlighter(HljsCodeHighlighter(dark: scheme == .dark))
-                .markdownBlockStyle(\.codeBlock) { configuration in   // 代码块自适应换行,不横向溢出
+                .markdownBlockStyle(\.codeBlock) { configuration in   // Wrap code blocks to avoid horizontal overflow.
                     configuration.label
                         .lineLimit(nil)
                         .fixedSize(horizontal: false, vertical: true)
@@ -165,8 +165,8 @@ struct FilePreview: View {
         }
     }
 
-    // ponytail: 开头的 YAML frontmatter,CommonMark 会把 --- 当 hr、字段当段落挤成一团(见反馈)。
-    // 转成 ```yaml 代码块 → 走 Highlightr 高亮 + 代码块样式,逐行可读。无 frontmatter 则原样返回。
+    // CommonMark treats opening YAML frontmatter as a horizontal rule followed by dense paragraphs.
+    // Convert it to a fenced YAML block for readable highlighting; return content unchanged when absent.
     private func frontmatterAsYAML(_ raw: String) -> String {
         let lines = raw.components(separatedBy: "\n")
         guard lines.first?.trimmingCharacters(in: .whitespaces) == "---",

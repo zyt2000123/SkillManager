@@ -2,13 +2,13 @@ import SwiftUI
 import Translation
 
 // ponytail: global translation cache. macOS Translation framework fills it once on launch;
-// views read translated text via zh(); the EN/中 toolbar toggle flips `enabled`.
+// Views read translated text via zh(); the EN/ZH toolbar toggle flips `enabled`.
 @MainActor @Observable
 final class Translator {
-    var enabled = true
+    var enabled = false
     var cache: [String: String] = [:]
 
-    // ponytail: 缓存持久化到磁盘。skill 描述基本不变,翻一次存盘,之后冷启动零翻译。
+    // Persist translations because skill descriptions rarely change; later launches need no translation work.
     private static let cacheURL = FileManager.default
         .urls(for: .cachesDirectory, in: .userDomainMask)[0]
         .appending(path: "SkillManager-zh.json")
