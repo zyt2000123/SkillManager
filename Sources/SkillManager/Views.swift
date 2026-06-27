@@ -13,7 +13,7 @@ enum Theme {
     }
 }
 
-// MARK: - Resizable divider (narrow by default, detail pane takes remaining space)
+// MARK: - 可拖拽分隔条(默认窄,右侧最大)
 
 struct ResizeHandle: View {
     @Binding var width: CGFloat
@@ -30,7 +30,7 @@ struct ResizeHandle: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { v in
-                        let b = base ?? width                     // Lock the baseline when the gesture begins.
+                        let b = base ?? width                     // 手势开始锁基准
                         if base == nil { base = width }
                         width = min(max(b + v.translation.width, range.lowerBound), range.upperBound)
                     }
@@ -95,15 +95,15 @@ struct SidebarView: View {
 
     var body: some View {
         List(selection: $selection) {
-            Section("Navigation") {
-                row("Skill Map", image: "map", tag: .skillMap, count: store.skills.count)
+            Section("导航") {
+                row("Skill 地图", image: "map", tag: .skillMap, count: store.skills.count)
             }
             Section("Claude Code") {
-                row("All", image: "square.grid.2x2", tag: .allPlatform("Claude Code"),
+                row("全部", image: "square.grid.2x2", tag: .allPlatform("Claude Code"),
                     count: store.count(platform: "Claude Code"))
             }
             Section("Codex") {
-                row("All", image: "chevron.left.forwardslash.chevron.right", tag: .allPlatform("Codex"),
+                row("全部", image: "chevron.left.forwardslash.chevron.right", tag: .allPlatform("Codex"),
                     count: store.count(platform: "Codex"))
             }
         }
@@ -156,8 +156,8 @@ struct SkillDetailView: View {
     @State private var previewFile: String?
     @State private var previewContent = ""
     @State private var loadedFiles: [String] = []
-    @State private var fileTree: [FileTreeNode] = []   // Build once after loading; previews do not rebuild the tree.
-    @State private var treeWidth: CGFloat = 240   // Default resizable file-tree width.
+    @State private var fileTree: [FileTreeNode] = []   // ponytail: fileList 后建一次,选文件预览不再反复重排
+    @State private var treeWidth: CGFloat = 240   // 文件树默认宽度(可拖)
     @Environment(Translator.self) private var translator
 
     private var homePath: String {
@@ -170,8 +170,8 @@ struct SkillDetailView: View {
                 .padding()
 
             HStack(spacing: 0) {
-                tabButton("Overview", tag: 0)
-                tabButton("Files (\(loadedFiles.count))", tag: 1)
+                tabButton("概览", tag: 0)
+                tabButton("文件 (\(loadedFiles.count))", tag: 1)
                 Spacer()
             }
             .padding(.horizontal)
@@ -183,13 +183,13 @@ struct SkillDetailView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .task(id: skill.id) {
-            loadedFiles = []; fileTree = []   // Clear stale content immediately when switching skills.
-            previewFile = nil; previewContent = ""   // Clear the previous file preview as well.
-            // Recursively scan large skill directories off the main thread.
-            let s = skill, st = store   // Capture on the main thread before entering the background closure.
+            loadedFiles = []; fileTree = []   // 切换瞬间清空旧内容,UI 立即响应
+            previewFile = nil; previewContent = ""   // 切 skill 也清掉旧文件预览,不残留
+            // 递归遍历目录(某些 skill 上百文件)放后台线程跑,不阻塞主线程
+            let s = skill, st = store   // 在主线程捕获,再传入后台闭包
             let files = await Task.detached { st.fileList(for: s) }.value
             loadedFiles = files
-            fileTree = Self.buildFileTree(files)   // Build once and reuse during subsequent renders.
+            fileTree = Self.buildFileTree(files)   // 一次性建树,后续渲染直接复用
         }
     }
 
@@ -212,10 +212,10 @@ struct SkillDetailView: View {
                     Text("v\(v)").font(.caption).foregroundStyle(.secondary)
                 }
                 if skill.isSymlink {
-                    Label("Symbolic Link", systemImage: "arrow.up.right")
+                    Label("符号链接", systemImage: "arrow.up.right")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Label("Auto-detected", systemImage: "bolt.fill")
+                Label("自动检测", systemImage: "bolt.fill")
                     .font(.caption)
                     .foregroundStyle(.green)
                     .padding(.horizontal, 8).padding(.vertical, 3)
@@ -232,10 +232,10 @@ struct SkillDetailView: View {
             .foregroundStyle(.secondary)
 
             HStack(spacing: 8) {
-                actionButton("Finder", icon: "folder") {
+                actionButton("访达", icon: "folder") {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: skill.directoryPath)])
                 }
-                actionButton("Edit", icon: "pencil") {
+                actionButton("编辑", icon: "pencil") {
                     NSWorkspace.shared.open(URL(fileURLWithPath: skill.directoryPath + "/SKILL.md"))
                 }
             }
@@ -275,13 +275,13 @@ struct SkillDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 if !skill.description.isEmpty {
-                    section("Description") {
+                    section("描述") {
                         Text(zhText(skill.summary.isEmpty ? skill.description : skill.summary))
                             .font(.body).foregroundStyle(.secondary)
                     }
                 }
                 if !skill.useWhen.isEmpty {
-                    section("When to Use") {
+                    section("适用场景") {
                         VStack(alignment: .leading, spacing: 6) {
                             ForEach(skill.useWhen, id: \.self) { s in
                                 Label { Text(zhText(s)) } icon: { Image(systemName: "checkmark.circle") }
@@ -292,7 +292,7 @@ struct SkillDetailView: View {
                     }
                 }
                 if !skill.proactive.isEmpty {
-                    section("Proactive Triggers") {
+                    section("主动触发规则") {
                         VStack(alignment: .leading, spacing: 6) {
                             ForEach(skill.proactive, id: \.self) { s in
                                 Label { Text(zhText(s)) } icon: { Image(systemName: "bolt.fill") }
@@ -303,7 +303,7 @@ struct SkillDetailView: View {
                     }
                 }
                 if !skill.triggers.isEmpty {
-                    section("Trigger Keywords") {
+                    section("触发词") {
                         FlowLayout(spacing: 6) {
                             ForEach(skill.triggers, id: \.self) { t in
                                 TagBadge(text: t, color: .green)
@@ -312,7 +312,7 @@ struct SkillDetailView: View {
                     }
                 }
                 if !skill.allowedTools.isEmpty {
-                    section("Available Tools") {
+                    section("可用工具") {
                         FlowLayout(spacing: 6) {
                             ForEach(skill.allowedTools, id: \.self) { t in
                                 TagBadge(text: t, color: .blue)
@@ -321,9 +321,9 @@ struct SkillDetailView: View {
                     }
                 }
                 if !loadedFiles.isEmpty {
-                    section("Directory Contents") {
+                    section("目录内容") {
                         let stats = directoryStats()
-                        Text("\(stats.dirs) directories · \(stats.fileCount) files")
+                        Text("\(stats.dirs) 个目录 · \(stats.fileCount) 个文件")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                         FlowLayout(spacing: 8) {
@@ -360,9 +360,9 @@ struct SkillDetailView: View {
                 }
                 .padding(.vertical, 6)
             }
-            .frame(width: treeWidth)                          // Start narrow.
+            .frame(width: treeWidth)                          // 默认窄
 
-            ResizeHandle(width: $treeWidth, range: 160...420)   // Resize from this divider only.
+            ResizeHandle(width: $treeWidth, range: 160...420)   // 只拖这根线
 
             if let file = previewFile {
                 VStack(alignment: .leading, spacing: 0) {
@@ -375,7 +375,7 @@ struct SkillDetailView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ContentUnavailableView("Select a File to Preview", systemImage: "doc.text.magnifyingglass")
+                ContentUnavailableView("选择文件以预览", systemImage: "doc.text.magnifyingglass")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -399,7 +399,7 @@ struct SkillDetailView: View {
                     Text(ext.isEmpty ? "?" : ext)
                         .font(.caption2.monospaced().bold())
                         .foregroundStyle(extColor(ext))
-                        .fixedSize()                      // Preserve intrinsic width so long extensions do not wrap.
+                        .fixedSize()                      // ponytail: 用理想宽度,长扩展名(yaml)不再折行
                         .frame(minWidth: 22)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 2)
@@ -526,15 +526,15 @@ private struct MapCategory {
 }
 
 private let mapCategories: [MapCategory] = [
-    .init(label: "Security & Audit", sfSymbol: "lock.shield", keywords: ["security", "audit", "ciso", "cso", "guard", "threat", "vulnerab"], color: .red),
-    .init(label: "Code Review", sfSymbol: "eye", keywords: ["review", "design-review", "pr-review", "lint"], color: .purple),
-    .init(label: "Debugging", sfSymbol: "ant", keywords: ["debug", "investigate", "diagnos", "troubleshoot", "health"], color: .orange),
-    .init(label: "Planning", sfSymbol: "list.clipboard", keywords: ["plan", "autoplan", "roadmap", "spec", "rfc"], color: .blue),
-    .init(label: "Documentation", sfSymbol: "book", keywords: ["doc", "document", "readme", "learn", "onboard"], color: .green),
-    .init(label: "Deployment", sfSymbol: "paperplane", keywords: ["deploy", "ship", "land", "release", "ci", "cd"], color: .yellow),
-    .init(label: "Testing", sfSymbol: "flask", keywords: ["test", "benchmark", "canary", "e2e", "coverage"], color: .cyan),
-    .init(label: "Design", sfSymbol: "paintbrush", keywords: ["design", "ui", "ux", "css", "style", "mockup"], color: .pink),
-    .init(label: "AI & Models", sfSymbol: "cpu", keywords: ["ai", "model", "llm", "prompt", "agent", "gpt"], color: .indigo),
+    .init(label: "安全与审计", sfSymbol: "lock.shield", keywords: ["security", "audit", "ciso", "cso", "guard", "threat", "vulnerab"], color: .red),
+    .init(label: "代码审查", sfSymbol: "eye", keywords: ["review", "design-review", "pr-review", "lint"], color: .purple),
+    .init(label: "调试排查", sfSymbol: "ant", keywords: ["debug", "investigate", "diagnos", "troubleshoot", "health"], color: .orange),
+    .init(label: "规划", sfSymbol: "list.clipboard", keywords: ["plan", "autoplan", "roadmap", "spec", "rfc"], color: .blue),
+    .init(label: "文档", sfSymbol: "book", keywords: ["doc", "document", "readme", "learn", "onboard"], color: .green),
+    .init(label: "部署发布", sfSymbol: "paperplane", keywords: ["deploy", "ship", "land", "release", "ci", "cd"], color: .yellow),
+    .init(label: "测试", sfSymbol: "flask", keywords: ["test", "benchmark", "canary", "e2e", "coverage"], color: .cyan),
+    .init(label: "设计", sfSymbol: "paintbrush", keywords: ["design", "ui", "ux", "css", "style", "mockup"], color: .pink),
+    .init(label: "AI 与模型", sfSymbol: "cpu", keywords: ["ai", "model", "llm", "prompt", "agent", "gpt"], color: .indigo),
 ]
 
 private struct CatGroup: Identifiable {
@@ -548,8 +548,8 @@ private func categorize(_ skills: [Skill]) -> [CatGroup] {
     var other: [Skill] = []
 
     for s in skills {
-        // Match only controlled short fields (name and triggers). Two-letter keywords such as ai/ui/ci/ml
-        // produce excessive false positives in long descriptions and place skills in the wrong category.
+        // ponytail: 只匹配受控短字段(名字+触发词)。description 太长,2-字母关键词(ai/ui/ci/ml)
+        // 会在 "html"/"build"/"especially" 里满世界误命中,把技能塞错格子。
         let haystack = "\(s.name) \(s.triggers.joined(separator: " "))".lowercased()
         if let i = mapCategories.firstIndex(where: { $0.keywords.contains { haystack.contains($0) } }) {
             buckets[i].append(s)
@@ -564,7 +564,7 @@ private func categorize(_ skills: [Skill]) -> [CatGroup] {
     if !other.isEmpty {
         result.append(CatGroup(
             id: "Other",
-            cat: MapCategory(label: "Other", sfSymbol: "shippingbox", keywords: [], color: .gray),
+            cat: MapCategory(label: "其他", sfSymbol: "shippingbox", keywords: [], color: .gray),
             skills: other
         ))
     }
@@ -576,7 +576,7 @@ struct SkillMapView: View {
     let skills: [Skill]
     let onSelect: (Skill) -> Void
     @State private var platformFilter: String? = nil
-    @State private var collapsed: Set<String> = []   // Collapsed category IDs; empty means fully expanded.
+    @State private var collapsed: Set<String> = []   // 被折叠的分类 id;空 = 全展开
 
     private var filtered: [Skill] {
         guard let pf = platformFilter else { return skills }
@@ -603,7 +603,7 @@ struct SkillMapView: View {
                 }
 
                 if filtered.isEmpty {
-                    ContentUnavailableView("No Matching Skills", systemImage: "magnifyingglass")
+                    ContentUnavailableView("没有匹配的技能", systemImage: "magnifyingglass")
                         .padding(.top, 40)
                 }
             }
@@ -612,7 +612,7 @@ struct SkillMapView: View {
 
     private var filterBar: some View {
         HStack(spacing: 8) {
-            filterPill("Installed", count: skills.count, active: platformFilter == nil) {
+            filterPill("已安装", count: skills.count, active: platformFilter == nil) {
                 platformFilter = nil
             }
             filterPill("Claude", count: skills.filter { $0.platform == "Claude Code" }.count,
@@ -624,7 +624,7 @@ struct SkillMapView: View {
                 platformFilter = platformFilter == "Codex" ? nil : "Codex"
             }
             Spacer()
-            Button("Check for Updates", systemImage: "arrow.clockwise") { Task { await store.scan() } }
+            Button("检查更新", systemImage: "arrow.clockwise") { Task { await store.scan() } }
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .buttonStyle(.plain)
@@ -642,13 +642,13 @@ struct SkillMapView: View {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(isCollapsed ? 0 : 90))   // Rotate 90 degrees when expanded.
+                    .rotationEffect(.degrees(isCollapsed ? 0 : 90))   // 展开转 90°
                 Image(systemName: group.cat.sfSymbol)
                     .foregroundStyle(group.cat.color)
                 Text(group.cat.label)
                     .font(.headline)
                 Spacer()
-                Text("\(group.skills.count) skills")
+                Text("\(group.skills.count) 个技能")
                     .font(.callout)
                     .foregroundStyle(.tertiary)
             }
@@ -716,14 +716,14 @@ private struct SkillMapRow: View {
 
             // Action icons — always visible
             HStack(spacing: 10) {
-                ActionIconButton(icon: "folder", tip: "Show in Finder") {
+                ActionIconButton(icon: "folder", tip: "在访达中显示") {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: skill.directoryPath)])
                 }
-                ActionIconButton(icon: "doc.on.doc", tip: "Copy Path") {
+                ActionIconButton(icon: "doc.on.doc", tip: "拷贝路径") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(skill.directoryPath, forType: .string)
                 }
-                ActionIconButton(icon: "pencil", tip: "Edit") {
+                ActionIconButton(icon: "pencil", tip: "编辑") {
                     NSWorkspace.shared.open(URL(fileURLWithPath: skill.directoryPath + "/SKILL.md"))
                 }
             }
@@ -737,7 +737,7 @@ private struct SkillMapRow: View {
         }
     }
 
-    // Icon-only action button with themed hover feedback and a native tooltip.
+    // 纯图标操作按钮:悬浮时变主题色 + 圆角高亮底,并带原生 tooltip 说明用途。
     private struct ActionIconButton: View {
         let icon: String
         let tip: String
@@ -754,7 +754,7 @@ private struct SkillMapRow: View {
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .help(tip)                                   // Native tooltip describing the action.
+            .help(tip)                                   // 原生悬浮提示:说明按钮用途
             .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hovering = h } }
         }
     }

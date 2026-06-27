@@ -12,7 +12,7 @@ struct Skill: Identifiable, Hashable {
     let allowedTools: [String]
     let directoryPath: String
     let isSymlink: Bool
-    // Derive display fields once during scanning to avoid repeated parsing in the render path.
+    // scan 时一次性派生的展示字段,避免 render 热路径重复切句/分类
     let summary: String
     let useWhen: [String]
     let proactive: [String]
@@ -21,8 +21,8 @@ struct Skill: Identifiable, Hashable {
 // ponytail: heuristic — split description into sentences, classify each. Skill triggering rules
 // live in prose ("Use when: …" = applicability; "Proactively … when …" = auto-trigger rule).
 extension Skill {
-    /// Splits and classifies sentences once: use cases, proactive triggers, and the remaining summary.
-    /// Called during scanning and stored on Skill; a computed property would repeat work on every body update.
+    /// 一次切句并分类:适用场景(useWhen)、主动触发(proactive)、其余归入主体描述(summary)。
+    /// scan 时调用一次,结果存进 Skill —— 不要做成 computed property,否则每次 body 求值都重跑。
     static func derive(from description: String) -> (summary: String, useWhen: [String], proactive: [String]) {
         let sentences = description
             .replacingOccurrences(of: "\n", with: " ")
@@ -40,7 +40,7 @@ extension Skill {
         return (summary.joined(separator: ". "), useWhen, proactive)
     }
 
-    /// Subsequence fuzzy matching: query characters must appear in order. "drv" matches "design-review".
+    /// 子序列模糊匹配:query 的字符按序出现在 target 即命中。"drv" → "design-review"。query 需已 lowercased。
     static func fuzzyMatch(_ query: String, _ target: String) -> Bool {
         var it = query.makeIterator()
         var cur = it.next()
@@ -52,7 +52,7 @@ extension Skill {
         return false
     }
 
-    /// Uses subsequence matching for names and substring matching for descriptions and triggers.
+    /// 统一搜索判定:名字用子序列模糊,描述/触发词用子串(长描述上子序列会误命中一切)。query 需已 lowercased。
     func matches(_ query: String) -> Bool {
         Skill.fuzzyMatch(query, name.lowercased())
         || description.lowercased().contains(query)
@@ -81,7 +81,7 @@ final class SkillStore {
     var skills: [Skill] = []
 
     func scan() async {
-        // Move directory traversal, SKILL.md reads, and parsing off the main thread to keep launch responsive.
+        // ponytail: 全部文件 IO(遍历 5 个目录 + 读每个 SKILL.md + parse)移到后台线程,不阻塞首屏
         skills = await Task.detached { Self.scanAll() }.value
     }
 
@@ -108,7 +108,7 @@ final class SkillStore {
         return all
     }
 
-    // The single search entry point injects translated text so the map and list behave consistently.
+    // ponytail: 唯一搜索入口。zh 注入译文查询(默认恒等),让地图与列表行为一致:中文搜索处处生效。
     func filtered(by sel: SidebarSelection, search: String,
                   zh: (String) -> String = { $0 }) -> [Skill] {
         skills.filter { s in
@@ -186,7 +186,7 @@ final class SkillStore {
     }
 
     nonisolated func fileList(for skill: Skill) -> [String] {
-        Self.listFiles(in: URL(fileURLWithPath: skill.directoryPath))   // List now; load file contents on demand.
+        Self.listFiles(in: URL(fileURLWithPath: skill.directoryPath))   // 只列文件;SKILL.md 内容由文件预览点击时按需读
     }
 
     // ponytail: heuristic — most skills lack a `triggers:` field; their triggers live in the
@@ -229,8 +229,8 @@ final class SkillStore {
         let prefix = dir.path
         var files: [String] = []
         for case let url as URL in enumerator {
-            // fileExists follows symbolic links, so an existing non-directory target counts as a file.
-            // This keeps linked SKILL.md files from being omitted from the file count.
+            // fileExists 会跟随符号链接:存在且非目录即算文件。
+            // 否则指向文件的 symlink(如纯链接型 skill 的 SKILL.md)会被漏算,显示「文件 (0)」。
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: url.path, isDirectory: &isDir), !isDir.boolValue else { continue }
             let p = url.path
