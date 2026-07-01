@@ -25,6 +25,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict></plist>
 PLIST
 
+# 移除隔离属性，避免"软件已损坏"提示
+xattr -cr "$APP"
+
 # 暂存目录:.app + 指向 /Applications 的软链 → 用户拖拽即装
 STAGING=$(mktemp -d)
 cp -R "$APP" "$STAGING/"

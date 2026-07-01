@@ -21,6 +21,10 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 </dict></plist>
 PLIST
+
+# 移除隔离属性，避免"软件已损坏"提示
+xattr -cr "$APP"
+
 pkill -9 -f SkillManager 2>/dev/null || true
 sleep 1
 open "$APP"
