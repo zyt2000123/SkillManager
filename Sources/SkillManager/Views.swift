@@ -6,10 +6,38 @@ import Translation
 
 enum Theme {
     static func platformColor(_ platform: String) -> Color {
-        platform == "Claude Code" ? .orange : .blue
+        switch platform {
+        case SkillPlatform.openClaw: return .teal
+        case SkillPlatform.codex: return .blue
+        case SkillPlatform.claudeCode: return .orange
+        case SkillPlatform.hermess: return .purple
+        default: return .accentColor
+        }
     }
+
     static func platformLabel(_ platform: String) -> String {
-        platform == "Claude Code" ? "Claude" : "Codex"
+        switch platform {
+        case SkillPlatform.claudeCode: return "Claude"
+        default: return platform
+        }
+    }
+
+    static func platformIcon(_ platform: String) -> String {
+        switch platform {
+        case SkillPlatform.openClaw: return "pawprint"
+        case SkillPlatform.codex: return "chevron.left.forwardslash.chevron.right"
+        case SkillPlatform.claudeCode: return "square.grid.2x2"
+        case SkillPlatform.hermess: return "bolt.horizontal"
+        default: return "sparkles"
+        }
+    }
+
+    static func installTypeColor(_ installType: String) -> Color {
+        installType == SkillInstallType.plugin ? .indigo : .green
+    }
+
+    static func installTypeIcon(_ installType: String) -> String {
+        installType == SkillInstallType.plugin ? "puzzlepiece.extension" : "folder"
     }
 }
 
@@ -92,22 +120,63 @@ struct TagBadge: View {
 struct SidebarView: View {
     @Environment(SkillStore.self) private var store
     @Binding var selection: SidebarSelection?
+    @State private var expandedPlatforms = Set(SkillPlatform.all)
 
     var body: some View {
         List(selection: $selection) {
             Section("导航") {
                 row("Skill 地图", image: "map", tag: .skillMap, count: store.skills.count)
+                Label("Skill 市场", systemImage: "storefront")
+                    .tag(SidebarSelection.skillMarket)
+                Label("Skill 分派", systemImage: "paperplane")
+                    .tag(SidebarSelection.skillDispatch)
             }
-            Section("Claude Code") {
-                row("全部", image: "square.grid.2x2", tag: .allPlatform("Claude Code"),
-                    count: store.count(platform: "Claude Code"))
-            }
-            Section("Codex") {
-                row("全部", image: "chevron.left.forwardslash.chevron.right", tag: .allPlatform("Codex"),
-                    count: store.count(platform: "Codex"))
+            Section("Agent") {
+                ForEach(SkillPlatform.all, id: \.self) { platform in
+                    platformRow(platform)
+                    if expandedPlatforms.contains(platform) {
+                        agentChildRow(SkillInstallType.skill, image: Theme.installTypeIcon(SkillInstallType.skill),
+                                      tag: .installType(platform: platform, installType: SkillInstallType.skill),
+                                      count: store.count(platform: platform, installType: SkillInstallType.skill))
+                        agentChildRow(SkillInstallType.plugin, image: Theme.installTypeIcon(SkillInstallType.plugin),
+                                      tag: .installType(platform: platform, installType: SkillInstallType.plugin),
+                                      count: store.count(platform: platform, installType: SkillInstallType.plugin))
+                    }
+                }
             }
         }
         .listStyle(.sidebar)
+    }
+
+    private func platformRow(_ platform: String) -> some View {
+        let isExpanded = expandedPlatforms.contains(platform)
+        return Button {
+            withAnimation(.easeInOut(duration: 0.14)) {
+                if isExpanded {
+                    expandedPlatforms.remove(platform)
+                } else {
+                    expandedPlatforms.insert(platform)
+                }
+            }
+        } label: {
+            Label {
+                Text(platform)
+            } icon: {
+                Image(systemName: Theme.platformIcon(platform))
+                    .foregroundStyle(Theme.platformColor(platform))
+            }
+            .contentShape(.rect)
+        }
+        .badge(store.count(platform: platform))
+        .buttonStyle(.plain)
+        .help(isExpanded ? "收起 \(platform)" : "展开 \(platform)")
+    }
+
+    private func agentChildRow(_ title: String, image: String, tag: SidebarSelection, count: Int) -> some View {
+        Label(title, systemImage: image)
+            .badge(count)
+            .padding(.leading, 26)
+            .tag(tag)
     }
 
     private func row(_ title: String, image: String, tag: SidebarSelection, count: Int) -> some View {
@@ -115,9 +184,259 @@ struct SidebarView: View {
     }
 }
 
+// MARK: - Skill Market
+
+struct SkillMarketView: View {
+    let search: String
+    let market: SkillMarketStore
+
+    private var filteredPlugins: [SkillMarketPlugin] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return market.plugins }
+        return market.plugins.filter { plugin in
+            plugin.name.lowercased().contains(query)
+            || plugin.description.lowercased().contains(query)
+            || plugin.sourceTitle.lowercased().contains(query)
+            || plugin.platforms.contains { $0.lowercased().contains(query) }
+            || plugin.keywords.contains { $0.lowercased().contains(query) }
+        }
+    }
+
+    private var sourceSummary: String {
+        if market.isLoading {
+            return "正在从 GitHub 市场源同步..."
+        }
+        return "\(market.loadedSourceCount)/\(market.sources.count) 个市场源 · \(market.plugins.count) 个插件"
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                header
+                sourceStrip
+                pluginGrid
+            }
+            .padding(22)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .task {
+            await market.refreshIfNeeded()
+        }
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 16) {
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Skill Market")
+                    .font(.largeTitle.bold())
+                Text("发现 GitHub 上的 Agent Skill 与 Plugin 市场源，先浏览、评估、复制安装命令。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Text(sourceSummary)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+            Spacer()
+            Button {
+                Task { await market.refresh() }
+            } label: {
+                Label(market.isLoading ? "同步中" : "刷新", systemImage: "arrow.clockwise")
+            }
+            .disabled(market.isLoading)
+            .buttonStyle(.borderedProminent)
+        }
+    }
+
+    private var sourceStrip: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("市场源")
+                    .font(.headline)
+                Spacer()
+                if let error = market.errorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                }
+            }
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12)], spacing: 12) {
+                ForEach(market.sources) { source in
+                    SkillMarketSourceCard(source: source)
+                }
+            }
+        }
+    }
+
+    private var pluginGrid: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("插件")
+                    .font(.headline)
+                Spacer()
+                Text("\(filteredPlugins.count)")
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            if market.isLoading && market.plugins.isEmpty {
+                ProgressView()
+                    .frame(maxWidth: .infinity, minHeight: 180)
+            } else if filteredPlugins.isEmpty {
+                ContentUnavailableView("没有匹配的市场插件", systemImage: "magnifyingglass")
+                    .frame(maxWidth: .infinity, minHeight: 180)
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 310), spacing: 12)], spacing: 12) {
+                    ForEach(filteredPlugins) { plugin in
+                        SkillMarketPluginCard(plugin: plugin)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct SkillMarketSourceCard: View {
+    @Environment(Translator.self) private var translator
+    let source: SkillMarketSource
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(source.title)
+                    .font(.headline)
+                    .lineLimit(1)
+                Spacer()
+                Button {
+                    NSWorkspace.shared.open(source.repositoryURL)
+                } label: {
+                    Image(systemName: "arrow.up.right.square")
+                }
+                .buttonStyle(.plain)
+                .help("打开 GitHub 仓库")
+            }
+
+            Text(translator.text(source.description))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+
+            FlowLayout(spacing: 6) {
+                ForEach(source.platforms, id: \.self) { platform in
+                    TagBadge(text: Theme.platformLabel(platform), color: Theme.platformColor(platform))
+                }
+            }
+
+            if let command = source.marketplaceAddCommands.first {
+                commandRow(command, tip: "复制市场添加命令")
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 148, alignment: .topLeading)
+        .background(.quaternary.opacity(0.65), in: .rect(cornerRadius: 8))
+    }
+}
+
+private struct SkillMarketPluginCard: View {
+    @Environment(Translator.self) private var translator
+    let plugin: SkillMarketPlugin
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(plugin.name)
+                    .font(.headline)
+                    .lineLimit(1)
+                if let version = plugin.version {
+                    Text("v\(version)")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 6)
+                openButton
+            }
+
+            FlowLayout(spacing: 6) {
+                ForEach(plugin.platforms, id: \.self) { platform in
+                    TagBadge(text: Theme.platformLabel(platform), color: Theme.platformColor(platform))
+                }
+                if let category = plugin.category {
+                    TagBadge(text: translator.text(category), color: .secondary)
+                }
+                TagBadge(text: plugin.sourceTitle, color: .blue)
+            }
+
+            Text(translator.text(plugin.description.isEmpty ? "No description" : plugin.description))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(3)
+                .multilineTextAlignment(.leading)
+                .frame(minHeight: 52, alignment: .topLeading)
+
+            if let author = plugin.author {
+                Label(author, systemImage: "person.crop.circle")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            if let command = plugin.installCommands.first {
+                commandRow(command, tip: "复制安装命令")
+            }
+        }
+        .padding(13)
+        .frame(maxWidth: .infinity, minHeight: 230, alignment: .topLeading)
+        .background(.background, in: .rect(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(.separator.opacity(0.75), lineWidth: 1)
+        )
+    }
+
+    private var openButton: some View {
+        Button {
+            if let url = plugin.repositoryURL ?? plugin.homepageURL {
+                NSWorkspace.shared.open(url)
+            }
+        } label: {
+            Image(systemName: "arrow.up.right.square")
+        }
+        .disabled(plugin.repositoryURL == nil && plugin.homepageURL == nil)
+        .buttonStyle(.plain)
+        .help("打开 GitHub 仓库")
+    }
+}
+
+private func commandRow(_ command: String, tip: String) -> some View {
+    HStack(spacing: 8) {
+        Text(command)
+            .font(.caption.monospaced())
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .textSelection(.enabled)
+        Spacer(minLength: 4)
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(command, forType: .string)
+        } label: {
+            Image(systemName: "doc.on.doc")
+        }
+        .buttonStyle(.plain)
+        .help(tip)
+    }
+    .padding(.horizontal, 9)
+    .padding(.vertical, 6)
+    .background(.black.opacity(0.06), in: .rect(cornerRadius: 6))
+}
+
 // MARK: - Skill List
 
 struct SkillListView: View {
+    @Environment(Translator.self) private var translator
     let skills: [Skill]
     @Binding var selectedId: String?
 
@@ -132,9 +451,12 @@ struct SkillListView: View {
                     if skill.isSymlink {
                         Image(systemName: "arrow.up.right").font(.caption2).foregroundStyle(.tertiary)
                     }
+                    Text(skill.installType)
+                        .font(.caption)
+                        .foregroundStyle(Theme.installTypeColor(skill.installType))
                 }
                 if !skill.description.isEmpty {
-                    Text(skill.description)
+                    Text(translator.text(skill.summary.isEmpty ? skill.description : skill.summary))
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
@@ -193,7 +515,7 @@ struct SkillDetailView: View {
         }
     }
 
-    private func zhText(_ s: String) -> String { translator.zh(s) }
+    private func translatedText(_ s: String) -> String { translator.text(s) }
 
     // MARK: Header
 
@@ -207,6 +529,7 @@ struct SkillDetailView: View {
 
             HStack(spacing: 6) {
                 TagBadge(text: skill.platform, color: Theme.platformColor(skill.platform))
+                TagBadge(text: skill.installType, color: Theme.installTypeColor(skill.installType))
                 TagBadge(text: skill.category, color: .secondary)
                 if let v = skill.version {
                     Text("v\(v)").font(.caption).foregroundStyle(.secondary)
@@ -276,7 +599,7 @@ struct SkillDetailView: View {
             VStack(alignment: .leading, spacing: 18) {
                 if !skill.description.isEmpty {
                     section("描述") {
-                        Text(zhText(skill.summary.isEmpty ? skill.description : skill.summary))
+                        Text(translatedText(skill.summary.isEmpty ? skill.description : skill.summary))
                             .font(.body).foregroundStyle(.secondary)
                     }
                 }
@@ -284,7 +607,7 @@ struct SkillDetailView: View {
                     section("适用场景") {
                         VStack(alignment: .leading, spacing: 6) {
                             ForEach(skill.useWhen, id: \.self) { s in
-                                Label { Text(zhText(s)) } icon: { Image(systemName: "checkmark.circle") }
+                                Label { Text(translatedText(s)) } icon: { Image(systemName: "checkmark.circle") }
                                     .font(.callout)
                                     .foregroundStyle(.secondary)
                             }
@@ -295,7 +618,7 @@ struct SkillDetailView: View {
                     section("主动触发规则") {
                         VStack(alignment: .leading, spacing: 6) {
                             ForEach(skill.proactive, id: \.self) { s in
-                                Label { Text(zhText(s)) } icon: { Image(systemName: "bolt.fill") }
+                                Label { Text(translatedText(s)) } icon: { Image(systemName: "bolt.fill") }
                                     .font(.callout)
                                     .foregroundStyle(.orange)
                             }
@@ -576,18 +899,14 @@ struct SkillMapView: View {
     @Environment(SkillStore.self) private var store
     let skills: [Skill]
     let onSelect: (Skill) -> Void
-    @State private var selectedTab = 0
+    @State private var selectedPlatform: String?
     @State private var collapsed: Set<String> = []
-    @State private var cachedCounts: (all: Int, claude: Int, codex: Int) = (0, 0, 0)
+    @State private var cachedCounts: [String: Int] = [:]
     @State private var categorizedGroups: [CatGroup] = []
 
     private var filtered: [Skill] {
-        switch selectedTab {
-        case 0: return skills
-        case 1: return skills.filter { $0.platform == "Claude Code" }
-        case 2: return skills.filter { $0.platform == "Codex" }
-        default: return skills
-        }
+        guard let selectedPlatform else { return skills }
+        return skills.filter { $0.platform == selectedPlatform }
     }
 
     var body: some View {
@@ -617,24 +936,28 @@ struct SkillMapView: View {
                 .padding(.top)
             }
         }
-        .task(id: skills.count) {
-            updateCounts()
+        .onChange(of: skills) { _, _ in
+            refresh()
         }
-        .onChange(of: selectedTab) { _, _ in
+        .onChange(of: selectedPlatform) { _, _ in
             updateCategories()
         }
         .onAppear {
-            updateCounts()
-            updateCategories()
+            refresh()
         }
     }
 
+    private func refresh() {
+        updateCounts()
+        updateCategories()
+    }
+
     private func updateCounts() {
-        cachedCounts = (
-            all: skills.count,
-            claude: skills.filter { $0.platform == "Claude Code" }.count,
-            codex: skills.filter { $0.platform == "Codex" }.count
-        )
+        var counts = ["__all": skills.count]
+        for platform in SkillPlatform.all {
+            counts[platform] = skills.filter { $0.platform == platform }.count
+        }
+        cachedCounts = counts
     }
 
     private func updateCategories() {
@@ -643,9 +966,15 @@ struct SkillMapView: View {
 
     private var tabBar: some View {
         HStack(spacing: 8) {
-            tabButton("已安装", count: cachedCounts.all, tag: 0)
-            tabButton("Claude", count: cachedCounts.claude, color: .orange, tag: 1)
-            tabButton("Codex", count: cachedCounts.codex, color: .blue, tag: 2)
+            tabButton("已安装", count: cachedCounts["__all"] ?? skills.count, platform: nil)
+            ForEach(SkillPlatform.all, id: \.self) { platform in
+                tabButton(
+                    Theme.platformLabel(platform),
+                    count: cachedCounts[platform] ?? 0,
+                    color: Theme.platformColor(platform),
+                    platform: platform
+                )
+            }
             Spacer()
             Button("检查更新", systemImage: "arrow.clockwise") {
                 Task { await store.scan() }
@@ -658,23 +987,24 @@ struct SkillMapView: View {
         .background(.bar)
     }
 
-    private func tabButton(_ label: String, count: Int, color: Color = .accentColor, tag: Int) -> some View {
-        Button {
-            selectedTab = tag
+    private func tabButton(_ label: String, count: Int, color: Color = .accentColor, platform: String?) -> some View {
+        let isSelected = selectedPlatform == platform
+        return Button {
+            selectedPlatform = platform
         } label: {
             HStack(spacing: 5) {
                 Text(label)
                     .font(.callout)
-                    .fontWeight(selectedTab == tag ? .semibold : .regular)
+                    .fontWeight(isSelected ? .semibold : .regular)
                 Text("\(count)")
                     .font(.caption.monospaced())
                     .bold()
-                    .foregroundStyle(selectedTab == tag ? color : .secondary)
+                    .foregroundStyle(isSelected ? color : .secondary)
             }
             .padding(.horizontal, 11)
             .padding(.vertical, 5)
             .background(
-                selectedTab == tag ? AnyShapeStyle(color.opacity(0.15)) : AnyShapeStyle(.quaternary),
+                isSelected ? AnyShapeStyle(color.opacity(0.15)) : AnyShapeStyle(.quaternary),
                 in: .capsule
             )
         }
@@ -729,17 +1059,20 @@ private struct SkillMapRow: View {
                         Text(Theme.platformLabel(skill.platform))
                             .font(.caption)
                             .foregroundStyle(Theme.platformColor(skill.platform))
+                        Text(skill.installType)
+                            .font(.caption)
+                            .foregroundStyle(Theme.installTypeColor(skill.installType))
                     }
                     let summary = skill.summary.isEmpty ? skill.description : skill.summary
                     if !summary.isEmpty {
-                        Text(translator.zh(summary))
+                        Text(translator.text(summary))
                             .font(.callout)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
                     }
                     if let p = skill.proactive.first {
-                        Label { Text(translator.zh(p)) } icon: { Image(systemName: "bolt.fill") }
+                        Label { Text(translator.text(p)) } icon: { Image(systemName: "bolt.fill") }
                             .font(.caption)
                             .foregroundStyle(.orange)
                             .lineLimit(1)

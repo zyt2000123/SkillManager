@@ -7,6 +7,7 @@ struct Skill: Identifiable, Hashable {
     let description: String
     let platform: String
     let category: String
+    let installType: String
     let version: String?
     let triggers: [String]
     let allowedTools: [String]
@@ -16,6 +17,30 @@ struct Skill: Identifiable, Hashable {
     let summary: String
     let useWhen: [String]
     let proactive: [String]
+}
+
+enum SkillPlatform {
+    static let openClaw = "OpenClaw"
+    static let codex = "Codex"
+    static let claudeCode = "ClaudeCode"
+    static let hermess = "Hermess"
+
+    static let all = [openClaw, codex, claudeCode, hermess]
+}
+
+enum SkillInstallType {
+    static let skill = "Skill"
+    static let plugin = "Plugin"
+
+    static let all = [skill, plugin]
+}
+
+private struct SkillScanLocation {
+    let dir: URL
+    let platform: String
+    let category: String
+    let installType: String
+    let excludes: Set<String>
 }
 
 // ponytail: heuristic — split description into sentences, classify each. Skill triggering rules
@@ -72,8 +97,11 @@ extension Skill {
 
 enum SidebarSelection: Hashable {
     case skillMap
+    case skillMarket
+    case skillDispatch
     case allPlatform(String)
     case category(platform: String, category: String)
+    case installType(platform: String, installType: String)
 }
 
 @MainActor @Observable
@@ -81,46 +109,68 @@ final class SkillStore {
     var skills: [Skill] = []
 
     func scan() async {
-        // ponytail: 全部文件 IO(遍历 5 个目录 + 读每个 SKILL.md + parse)移到后台线程,不阻塞首屏
+        // ponytail: 全部文件 IO(遍历多个目录 + 读每个 SKILL.md + parse)移到后台线程,不阻塞首屏
         skills = await Task.detached { Self.scanAll() }.value
     }
 
     nonisolated static func scanAll() -> [Skill] {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        let locations: [(URL, String, String, Set<String>)] = [
-            (home.appending(path: ".claude/skills"), "Claude Code", "Standalone", ["gstack"]),
-            (home.appending(path: ".claude/skills/gstack"), "Claude Code", "GStack", []),
-            (home.appending(path: ".codex/skills"), "Codex", "User", [".system"]),
-            (home.appending(path: ".codex/skills/.system"), "Codex", "System", []),
-            (home.appending(path: ".codex/vendor_imports/skills/skills/.curated"), "Codex", "Curated", []),
+        let locations: [SkillScanLocation] = [
+            .init(dir: home.appending(path: ".openclaw/skills"), platform: SkillPlatform.openClaw, category: "User", installType: SkillInstallType.skill, excludes: []),
+            .init(dir: home.appending(path: ".config/openclaw/skills"), platform: SkillPlatform.openClaw, category: "Config", installType: SkillInstallType.skill, excludes: []),
+            .init(dir: home.appending(path: "Library/Application Support/OpenClaw/skills"), platform: SkillPlatform.openClaw, category: "App Support", installType: SkillInstallType.skill, excludes: []),
+
+            .init(dir: home.appending(path: ".codex/skills"), platform: SkillPlatform.codex, category: "User", installType: SkillInstallType.skill, excludes: [".system"]),
+            .init(dir: home.appending(path: ".codex/skills/.system"), platform: SkillPlatform.codex, category: "System", installType: SkillInstallType.skill, excludes: []),
+            .init(dir: home.appending(path: ".codex/vendor_imports/skills/skills/.curated"), platform: SkillPlatform.codex, category: "Curated", installType: SkillInstallType.skill, excludes: []),
+
+            .init(dir: home.appending(path: ".claude/skills"), platform: SkillPlatform.claudeCode, category: "Standalone", installType: SkillInstallType.skill, excludes: ["gstack"]),
+            .init(dir: home.appending(path: ".claude/skills/gstack"), platform: SkillPlatform.claudeCode, category: "GStack", installType: SkillInstallType.skill, excludes: []),
+
+            .init(dir: home.appending(path: ".hermess/skills"), platform: SkillPlatform.hermess, category: "User", installType: SkillInstallType.skill, excludes: []),
+            .init(dir: home.appending(path: ".hermes/skills"), platform: SkillPlatform.hermess, category: "Hermes", installType: SkillInstallType.skill, excludes: []),
+            .init(dir: home.appending(path: ".config/hermess/skills"), platform: SkillPlatform.hermess, category: "Config", installType: SkillInstallType.skill, excludes: []),
+            .init(dir: home.appending(path: ".config/hermes/skills"), platform: SkillPlatform.hermess, category: "Config", installType: SkillInstallType.skill, excludes: []),
+            .init(dir: home.appending(path: "Library/Application Support/Hermess/skills"), platform: SkillPlatform.hermess, category: "App Support", installType: SkillInstallType.skill, excludes: []),
+            .init(dir: home.appending(path: "Library/Application Support/Hermes/skills"), platform: SkillPlatform.hermess, category: "App Support", installType: SkillInstallType.skill, excludes: []),
         ]
         var all: [Skill] = []
-        for (dir, platform, category, excludes) in locations {
-            all += scanDir(dir, platform: platform, category: category, excludes: excludes)
+        for location in locations {
+            all += scanDir(
+                location.dir,
+                platform: location.platform,
+                category: location.category,
+                installType: location.installType,
+                excludes: location.excludes
+            )
         }
-        // Deduplicate by name+platform, keep the first (more specific category)
+        all += scanRecursiveSkills(under: home.appending(path: ".codex/plugins/cache"), platform: SkillPlatform.codex, category: "Plugin", installType: SkillInstallType.plugin)
+        all += scanClaudePluginCache(home.appending(path: ".claude/plugins/cache"))
+
+        // Deduplicate within each agent/source bucket, so direct Skill and Plugin copies stay visible.
         var seen: Set<String> = []
         all = all.filter { s in
-            let key = "\(s.platform):\(s.name)"
+            let key = "\(s.platform):\(s.installType):\(s.name)"
             return seen.insert(key).inserted
         }
         all.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         return all
     }
 
-    // ponytail: 唯一搜索入口。zh 注入译文查询(默认恒等),让地图与列表行为一致:中文搜索处处生效。
+    // ponytail: 唯一搜索入口。注入译文查询(默认恒等),让地图与列表行为一致:翻译搜索处处生效。
     func filtered(by sel: SidebarSelection, search: String,
-                  zh: (String) -> String = { $0 }) -> [Skill] {
+                  translate: (String) -> String = { $0 }) -> [Skill] {
         skills.filter { s in
             switch sel {
-            case .skillMap: break
+            case .skillMap, .skillMarket, .skillDispatch: break
             case .allPlatform(let p): if s.platform != p { return false }
             case .category(let p, let c): if s.platform != p || s.category != c { return false }
+            case .installType(let p, let t): if s.platform != p || s.installType != t { return false }
             }
             guard !search.isEmpty else { return true }
             return s.matches(search.lowercased())
-                || zh(s.summary).contains(search)
-                || s.proactive.contains { zh($0).contains(search) }
+                || translate(s.summary).contains(search)
+                || s.proactive.contains { translate($0).contains(search) }
         }
     }
 
@@ -128,12 +178,22 @@ final class SkillStore {
         skills.filter { $0.platform == platform && (category == nil || $0.category == category) }.count
     }
 
+    func count(platform: String, installType: String) -> Int {
+        skills.filter { $0.platform == platform && $0.installType == installType }.count
+    }
+
     func readFile(directory: String, relative: String) -> String {
         let url = URL(fileURLWithPath: directory).appending(path: relative)
         return (try? String(contentsOf: url, encoding: .utf8)) ?? "Unable to read file"
     }
 
-    nonisolated private static func scanDir(_ dir: URL, platform: String, category: String, excludes: Set<String>) -> [Skill] {
+    nonisolated private static func scanDir(
+        _ dir: URL,
+        platform: String,
+        category: String,
+        installType: String,
+        excludes: Set<String>
+    ) -> [Skill] {
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: dir, includingPropertiesForKeys: [.isSymbolicLinkKey], options: []
         ) else { return [] }
@@ -142,7 +202,7 @@ final class SkillStore {
             let dirName = entry.lastPathComponent
             guard !excludes.contains(dirName) else { return [] }
 
-            if let skill = Self.makeSkill(at: entry, dirName: dirName, platform: platform, category: category) {
+            if let skill = Self.makeSkill(at: entry, dirName: dirName, platform: platform, category: category, installType: installType) {
                 return [skill]
             }
 
@@ -152,7 +212,7 @@ final class SkillStore {
                     at: entry, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
                 ) else { return [] }
                 return subs.compactMap { sub in
-                    Self.makeSkill(at: sub, dirName: sub.lastPathComponent, platform: platform, category: category)
+                    Self.makeSkill(at: sub, dirName: sub.lastPathComponent, platform: platform, category: category, installType: installType)
                 }
             }
 
@@ -160,7 +220,98 @@ final class SkillStore {
         }
     }
 
-    nonisolated private static func makeSkill(at entry: URL, dirName: String, platform: String, category: String) -> Skill? {
+    nonisolated private static func scanRecursiveSkills(under root: URL, platform: String, category: String, installType: String) -> [Skill] {
+        recursiveSkillDirs(under: root).compactMap { entry in
+            makeSkill(at: entry, dirName: entry.lastPathComponent, platform: platform, category: category, installType: installType)
+        }
+    }
+
+    nonisolated private static func scanClaudePluginCache(_ root: URL) -> [Skill] {
+        recursiveSkillDirs(under: root).compactMap { entry in
+            guard let target = classifyClaudePluginSkill(at: entry, under: root) else { return nil }
+            return makeSkill(at: entry, dirName: entry.lastPathComponent, platform: target.platform, category: target.category, installType: SkillInstallType.plugin)
+        }
+    }
+
+    nonisolated private static func recursiveSkillDirs(under root: URL) -> [URL] {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: root.path, isDirectory: &isDir), isDir.boolValue,
+              let enumerator = fm.enumerator(
+                at: root,
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                options: []
+              )
+        else { return [] }
+
+        let skippedDirectories = Set([".git", ".build", "build", "dist", "node_modules"])
+        var dirs: [URL] = []
+        for case let url as URL in enumerator {
+            if let values = try? url.resourceValues(forKeys: [.isDirectoryKey]),
+               values.isDirectory == true {
+                if skippedDirectories.contains(url.lastPathComponent) {
+                    enumerator.skipDescendants()
+                }
+                continue
+            }
+            guard url.lastPathComponent == "SKILL.md" else { continue }
+            dirs.append(url.deletingLastPathComponent())
+        }
+        return dirs.sorted { $0.path.localizedCaseInsensitiveCompare($1.path) == .orderedAscending }
+    }
+
+    nonisolated private static func classifyClaudePluginSkill(
+        at skillDir: URL,
+        under root: URL
+    ) -> (platform: String, category: String)? {
+        let comps = relativeComponents(of: skillDir, under: root)
+        let lowered = comps.map { $0.lowercased() }
+        let parents = lowered.dropLast()
+
+        let nonClaudeAgentFolders = Set([
+            ".agents", "agents", ".codex", "codex", ".cursor", "cursor", ".openclaw", "openclaw",
+            ".trae", "trae", ".opencode", "opencode", ".hermes", "hermes", ".hermess", "hermess",
+            "codebuddy", ".codebuddy", "kimi", ".kimi", ".gemini", "gemini", ".qwen", "qwen",
+            ".zed", "zed", ".kiro", "kiro", "vscode", ".vscode"
+        ])
+        if parents.contains(where: { nonClaudeAgentFolders.contains($0) }) {
+            return nil
+        }
+
+        if isClaudePluginSkillPath(lowered) {
+            return (SkillPlatform.claudeCode, "Plugin")
+        }
+
+        return nil
+    }
+
+    nonisolated private static func isClaudePluginSkillPath(_ components: [String]) -> Bool {
+        guard let skillsIndex = components.lastIndex(of: "skills") else { return false }
+        let beforeSkills = components[..<skillsIndex]
+
+        if beforeSkills.last == ".claude" {
+            return true
+        }
+
+        let nonRuntimeFolders = Set(["benchmarks", "build", "dist", "docs", "examples", "hooks", "node_modules", "scripts", "tests"])
+        return !beforeSkills.contains(where: { nonRuntimeFolders.contains($0) })
+    }
+
+    nonisolated private static func relativeComponents(of url: URL, under root: URL) -> [String] {
+        let rootPath = root.standardizedFileURL.path
+        let path = url.standardizedFileURL.path
+        let relative: String
+        if path == rootPath {
+            relative = ""
+        } else if path.hasPrefix(rootPath + "/") {
+            relative = String(path.dropFirst(rootPath.count + 1))
+        } else {
+            relative = path
+        }
+        return relative.split(separator: "/").map(String.init)
+    }
+
+    nonisolated private static func makeSkill(at entry: URL, dirName: String, platform: String, category: String, installType: String) -> Skill? {
         guard let content = try? String(contentsOf: entry.appending(path: "SKILL.md"), encoding: .utf8) else { return nil }
         let fm = Frontmatter.parse(content)
         let symlink = (try? entry.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) ?? false
@@ -174,6 +325,7 @@ final class SkillStore {
             description: description,
             platform: platform,
             category: category,
+            installType: installType,
             version: fm.string("version"),
             triggers: triggers,
             allowedTools: fm.array("allowed-tools"),

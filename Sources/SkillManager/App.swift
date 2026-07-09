@@ -26,8 +26,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+private enum TranslationTaskMode {
+    case translate
+    case prepare
+}
+
+private enum TranslationLanguageAlertKind {
+    case download
+    case unsupported
+    case failed
+}
+
+private struct TranslationLanguageAlert {
+    let target: TranslationTarget
+    let kind: TranslationLanguageAlertKind
+}
+
 struct ContentView: View {
     @State private var store = SkillStore()
+    @State private var market = SkillMarketStore()
+    @State private var dispatch = SkillDispatchStore()
     @State private var selection: SidebarSelection? = .skillMap
     @State private var selectedSkillId: String?
     @State private var search = ""
@@ -35,7 +53,9 @@ struct ContentView: View {
     @State private var listWidth: CGFloat = 280   // 技能列表默认宽度(可拖)
     @AppStorage("isDarkMode") private var isDark = true
     @State private var translator = Translator()
-    @State private var zhConfig: TranslationSession.Configuration?
+    @State private var translationConfig: TranslationSession.Configuration?
+    @State private var translationTaskMode: TranslationTaskMode = .translate
+    @State private var translationLanguageAlert: TranslationLanguageAlert?
 
     private var selectedSkill: Skill? {
         guard let id = selectedSkillId else { return nil }
@@ -45,19 +65,24 @@ struct ContentView: View {
     private func skillBelongs(_ id: String?, to sel: SidebarSelection?) -> Bool {
         guard let id, let skill = store.skills.first(where: { $0.id == id }), let sel else { return false }
         switch sel {
-        case .skillMap: return false
+        case .skillMap, .skillMarket, .skillDispatch: return false
         case .allPlatform(let p): return skill.platform == p
         case .category(let p, let c): return skill.platform == p && skill.category == c
+        case .installType(let p, let t): return skill.platform == p && skill.installType == t
         }
     }
 
     private var searchedSkills: [Skill] {
-        store.filtered(by: .skillMap, search: debouncedSearch, zh: translator.zh)
+        store.filtered(by: .skillMap, search: debouncedSearch, translate: translator.text)
     }
 
     @ViewBuilder
     private var detailContent: some View {
-        if selection == .skillMap || selection == nil {
+        if selection == .skillMarket {
+            SkillMarketView(search: debouncedSearch, market: market)
+        } else if selection == .skillDispatch {
+            SkillDispatchView(dispatch: dispatch)
+        } else if selection == .skillMap || selection == nil {
             SkillMapView(skills: searchedSkills) { skill in
                 selectedSkillId = skill.id
                 selection = .allPlatform(skill.platform)
@@ -65,7 +90,7 @@ struct ContentView: View {
         } else {
             HStack(spacing: 0) {
                 SkillListView(
-                    skills: store.filtered(by: selection ?? .skillMap, search: debouncedSearch, zh: translator.zh),
+                    skills: store.filtered(by: selection ?? .skillMap, search: debouncedSearch, translate: translator.text),
                     selectedId: $selectedSkillId
                 )
                 .frame(width: listWidth)
@@ -98,12 +123,30 @@ struct ContentView: View {
                 .buttonStyle(.plain)
                 .help(isDark ? "切换到浅色外观" : "切换到深色外观")
 
-                Button(translator.enabled ? "EN" : "中") {
-                    translator.enabled.toggle()
+                Menu {
+                    Button {
+                        translator.enabled = false
+                        refreshTranslationConfig()
+                    } label: {
+                        Label("原文", systemImage: translator.enabled ? "doc.text" : "checkmark")
+                    }
+                    Divider()
+                    ForEach(TranslationTarget.all) { target in
+                        Button {
+                            Task { await selectTranslationTarget(target) }
+                        } label: {
+                            Label(
+                                target.label,
+                                systemImage: translator.enabled && translator.targetID == target.id ? "checkmark" : "translate"
+                            )
+                        }
+                    }
+                } label: {
+                    Label(translator.toolbarLabel, systemImage: "translate")
                 }
                 .font(.system(size: 14, weight: .medium))
                 .buttonStyle(.plain)
-                .help(translator.enabled ? "显示英文原文" : "显示中文翻译")
+                .help(translator.enabled ? "选择翻译目标语言" : "显示原文")
 
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 14, weight: .regular))
@@ -133,6 +176,8 @@ struct ContentView: View {
         NavigationSplitView {
             SidebarView(selection: $selection)
                 .environment(store)
+                .frame(width: 220)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 220, max: 220)
         } detail: {
             detailContent
                 .environment(store)
@@ -154,30 +199,184 @@ struct ContentView: View {
         }
         .task {
             await store.scan()
-            zhConfig = TranslationSession.Configuration(
-                source: Locale.Language(identifier: "en"),
-                target: Locale.Language(identifier: "zh-Hans"))
+            refreshTranslationConfig()
         }
-        .translationTask(zhConfig) { session in
-            await runTranslation(session)
+        .onChange(of: store.skills) { _, _ in
+            refreshTranslationConfig()
+        }
+        .onChange(of: market.plugins) { _, _ in
+            refreshTranslationConfig()
+        }
+        .onChange(of: dispatch.skills) { _, _ in
+            refreshTranslationConfig()
+        }
+        .translationTask(translationConfig) { session in
+            switch translationTaskMode {
+            case .prepare:
+                await prepareTranslation(session)
+            case .translate:
+                await runTranslation(session)
+            }
+        }
+        .alert(isPresented: Binding(
+            get: { translationLanguageAlert != nil },
+            set: { if !$0 { translationLanguageAlert = nil } }
+        )) {
+            languageAlert()
+        }
+    }
+
+    private func refreshTranslationConfig() {
+        guard translator.enabled else {
+            translationConfig = nil
+            return
+        }
+        triggerTranslationTask(.translate)
+    }
+
+    private func triggerTranslationTask(_ mode: TranslationTaskMode) {
+        translationTaskMode = mode
+        var config = translationConfig ?? TranslationSession.Configuration()
+        config.source = nil
+        config.target = translator.target.language
+        config.invalidate()
+        translationConfig = config
+    }
+
+    @MainActor
+    private func selectTranslationTarget(_ target: TranslationTarget) async {
+        let availability = LanguageAvailability()
+        let status = await availability.status(
+            from: availabilitySourceLanguage(for: target),
+            to: target.language
+        )
+        switch status {
+        case .installed:
+            applyTranslationTarget(target)
+        case .supported:
+            translationLanguageAlert = TranslationLanguageAlert(target: target, kind: .download)
+        case .unsupported:
+            translationLanguageAlert = TranslationLanguageAlert(target: target, kind: .unsupported)
+        @unknown default:
+            translationLanguageAlert = TranslationLanguageAlert(target: target, kind: .unsupported)
+        }
+    }
+
+    private func availabilitySourceLanguage(for target: TranslationTarget) -> Locale.Language {
+        Locale.Language(identifier: target.id == "en" ? "zh-Hans" : "en")
+    }
+
+    private func applyTranslationTarget(_ target: TranslationTarget, mode: TranslationTaskMode = .translate) {
+        translator.setTarget(target.id)
+        triggerTranslationTask(mode)
+    }
+
+    private func languageAlert() -> Alert {
+        guard let alert = translationLanguageAlert else {
+            return Alert(title: Text("无法检查语言包"))
+        }
+
+        switch alert.kind {
+        case .download:
+            return Alert(
+                title: Text("需要下载语言包"),
+                message: Text("本机还没有安装 \(alert.target.label) 翻译语言包。下载后才能翻译成该语言。"),
+                primaryButton: .default(Text("下载")) {
+                    applyTranslationTarget(alert.target, mode: .prepare)
+                },
+                secondaryButton: .cancel(Text("取消"))
+            )
+        case .unsupported:
+            return Alert(
+                title: Text("暂不支持该语言"),
+                message: Text("当前系统暂不支持翻译成 \(alert.target.label)。"),
+                dismissButton: .default(Text("好"))
+            )
+        case .failed:
+            return Alert(
+                title: Text("语言包未下载完成"),
+                message: Text("\(alert.target.label) 语言包没有下载完成，可以稍后再次选择该语言重试。"),
+                dismissButton: .default(Text("好"))
+            )
+        }
+    }
+
+    private func prepareTranslation(_ session: TranslationSession) async {
+        let targetID = TranslationTarget.id(matching: session.targetLanguage)
+        do {
+            try await session.prepareTranslation()
+            translationTaskMode = .translate
+            if targetID == translator.targetID {
+                triggerTranslationTask(.translate)
+            }
+        } catch {
+            if let targetID {
+                translationLanguageAlert = TranslationLanguageAlert(target: TranslationTarget.byID(targetID), kind: .failed)
+            }
+            translationTaskMode = .translate
+            FileHandle.standardError.write(Data("TRANSLATION_PREPARE_ERR \(error)\n".utf8))
         }
     }
 
     private func runTranslation(_ session: TranslationSession) async {
-        let texts = Set(store.skills.flatMap { [$0.summary] + $0.useWhen + $0.proactive })
-            .filter { !$0.isEmpty && translator.cache[$0] == nil }
+        guard let targetID = TranslationTarget.id(matching: session.targetLanguage) else { return }
+        let texts = Array(Set(translationTexts)
+            .filter { translator.needsTranslation($0, for: targetID) }
+            .sorted())
         guard !texts.isEmpty else { return }   // 缓存已全命中 → 本次零翻译,启动瞬间
-        var batch = translator.cache
-        do {
-            // 批量并发翻译,而非逐条串行 await —— 首次翻译从数秒压到数百毫秒
-            let requests = texts.map { TranslationSession.Request(sourceText: $0) }
-            for response in try await session.translations(from: requests) {
-                batch[response.sourceText] = response.targetText
+
+        for chunk in texts.chunked(into: 24) {
+            var batch: [String: String] = [:]
+            do {
+                let requests = chunk.map { TranslationSession.Request(sourceText: $0) }
+                for response in try await session.translations(from: requests) {
+                    batch[response.sourceText] = response.targetText
+                }
+            } catch {
+                FileHandle.standardError.write(Data("TRANSLATION_BATCH_ERR \(error)\n".utf8))
+                for text in chunk {
+                    do {
+                        let response = try await session.translate(text)
+                        batch[response.sourceText] = response.targetText
+                    } catch {
+                        FileHandle.standardError.write(Data("TRANSLATION_ITEM_ERR \(error)\n".utf8))
+                    }
+                }
             }
-        } catch {
-            FileHandle.standardError.write(Data("ZH_ERR \(error)\n".utf8))
+
+            if !batch.isEmpty {
+                translator.merge(batch, for: targetID)   // 分批赋值 → 翻译结果逐步出现在 UI
+                translator.save()
+            }
         }
-        translator.cache = batch   // 一次性赋值 → 只触发一次重渲染
-        translator.save()          // 落盘 → 下次启动直接命中
+    }
+
+    private func translationTexts(for skill: Skill) -> [String] {
+        [skill.description, skill.summary] + skill.useWhen + skill.proactive
+    }
+
+    private var translationTexts: [String] {
+        store.skills.flatMap(translationTexts(for:))
+        + market.sources.flatMap(translationTexts(for:))
+        + market.plugins.flatMap(translationTexts(for:))
+        + dispatch.skills.map(\.description)
+        + ["No description"]
+    }
+
+    private func translationTexts(for source: SkillMarketSource) -> [String] {
+        [source.description]
+    }
+
+    private func translationTexts(for plugin: SkillMarketPlugin) -> [String] {
+        [plugin.description, plugin.category ?? ""]
+    }
+}
+
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        guard size > 0 else { return [self] }
+        return stride(from: 0, to: count, by: size).map {
+            Array(self[$0..<Swift.min($0 + size, count)])
+        }
     }
 }
