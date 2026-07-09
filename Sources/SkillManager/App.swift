@@ -237,7 +237,7 @@ struct ContentView: View {
     private func triggerTranslationTask(_ mode: TranslationTaskMode) {
         translationTaskMode = mode
         var config = translationConfig ?? TranslationSession.Configuration()
-        config.source = nil
+        config.source = translationSourceLanguage(for: translator.target)
         config.target = translator.target.language
         config.invalidate()
         translationConfig = config
@@ -247,7 +247,7 @@ struct ContentView: View {
     private func selectTranslationTarget(_ target: TranslationTarget) async {
         let availability = LanguageAvailability()
         let status = await availability.status(
-            from: availabilitySourceLanguage(for: target),
+            from: translationSourceLanguage(for: target),
             to: target.language
         )
         switch status {
@@ -262,7 +262,7 @@ struct ContentView: View {
         }
     }
 
-    private func availabilitySourceLanguage(for target: TranslationTarget) -> Locale.Language {
+    private func translationSourceLanguage(for target: TranslationTarget) -> Locale.Language {
         Locale.Language(identifier: target.id == "en" ? "zh-Hans" : "en")
     }
 
